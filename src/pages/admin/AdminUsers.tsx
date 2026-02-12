@@ -38,7 +38,6 @@ export default function AdminUsers() {
               </TableHeader>
               <TableBody>
                 {users.map(user => {
-                  // استخراج الدور من المصفوفة
                   const userRole = user.user_roles && user.user_roles.length > 0 ? user.user_roles[0].role : 'unknown';
                   
                   return (
