@@ -2,27 +2,26 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/services/api';
-import { supabase } from '@/integrations/supabase/client'; // استيراد العميل للـ Realtime
+import { supabase } from '@/integrations/supabase/client';
 import AppLayout from '@/components/AppLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, MapPin, Weight, DollarSign, User } from 'lucide-react';
-import { Load } from '@/types';
+import { Loader2, MapPin, Weight, DollarSign, User, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function DriverLoads() {
   const { t } = useTranslation();
   const { userProfile } = useAuth();
-  const [loads, setLoads] = useState<Load[]>([]);
+  const [loads, setLoads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
 
-  // دالة جلب البيانات باستخدام الـ api.ts الخاص بك
-  const fetchLoads = async () => {
+  const fetchAvailableLoads = async () => {
     try {
       const data = await api.getAvailableLoads();
-      // ملاحظة: لكي تظهر لك شحناتك أثناء التجربة، احذف فلتر (owner_id !== userProfile?.id)
-      setLoads(data as any[]);
+      // نعرض الشحنات المتاحة فقط والتي لم ينشرها هذا المستخدم
+      setLoads((data as any[])?.filter(l => l.owner_id !== userProfile?.id) || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -31,78 +30,96 @@ export default function DriverLoads() {
   };
 
   useEffect(() => {
-    fetchLoads();
+    fetchAvailableLoads();
 
-    // إعداد التحديث الفوري
+    // تحديث فوري للشحنات: لو تاجر أضاف شحنة تظهر، ولو سواق قبل شحنة تختفي من عند الباقي
     const channel = supabase
-      .channel('public:loads')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loads' },
-        (payload) => {
-          console.log('تغيير في قاعدة البيانات:', payload);
-          fetchLoads(); // إعادة جلب البيانات فوراً عند أي تغيير
-        }
-      )
+      .channel('available-loads')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'loads' }, () => {
+        fetchAvailableLoads();
+      })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile]);
+
+  // دالة قبول الشحنة
+  const handleAcceptLoad = async (loadId: string) => {
+    if (!userProfile?.id) return;
+    
+    setAcceptingId(loadId); // تشغيل لودر على الزر المحدد
+    try {
+      await api.acceptLoad(loadId, userProfile.id);
+      toast.success("تم قبول الشحنة بنجاح! اذهب لصفحة 'شحناتي' لمتابعتها");
+      // الشحنة ستختفي تلقائياً من القائمة بفضل الـ Realtime
+    } catch (err: any) {
+      toast.error("فشل قبول الشحنة: " + err.message);
+    } finally {
+      setAcceptingId(null);
+    }
+  };
 
   return (
     <AppLayout>
       <div className="space-y-4">
         <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold">الشحنات المتاحة</h2>
-            <div className="flex items-center gap-2 text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full border border-green-200">
-                <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                </span>
-                تحديث مباشر
-            </div>
+            <h2 className="text-xl font-bold">الشحنات المتاحة للتحميل</h2>
+            <Badge className="bg-primary/10 text-primary border-primary/20">{loads.length} شحنة</Badge>
         </div>
 
         {loading ? (
           <div className="flex justify-center py-12"><Loader2 className="animate-spin text-primary" size={32} /></div>
         ) : loads.length === 0 ? (
-          <div className="text-center py-12 border-2 border-dashed rounded-xl text-muted-foreground">
-            لا توجد شحنات متاحة حالياً
+          <div className="text-center py-20 border-2 border-dashed rounded-3xl">
+            <p className="text-muted-foreground font-medium">لا توجد شحنات متاحة في منطقتك حالياً</p>
           </div>
         ) : (
           <div className="grid gap-4">
-            {loads.map((load: any) => (
-              <Card key={load.id} className="hover:border-primary transition-colors">
-                <CardContent className="p-5">
+            {loads.map((load) => (
+              <Card key={load.id} className="border-none shadow-sm bg-card hover:shadow-md transition-all">
+                <CardContent className="p-6">
                   <div className="flex justify-between items-start mb-4">
-                    <div className="flex items-center gap-2 text-lg font-bold">
-                      <MapPin className="text-primary" size={18} />
-                      {load.origin} ← {load.destination}
-                    </div>
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">متاحة</Badge>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
-                    <div>
-                      <p className="text-muted-foreground text-xs">الوزن</p>
-                      <p className="font-semibold flex items-center gap-1"><Weight size={14}/> {load.weight} طن</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground text-xs">السعر</p>
-                      <p className="font-bold text-green-600 flex items-center gap-1"><DollarSign size={14}/> {load.price} ر.س</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground text-xs">الشاحن</p>
-                      <p className="font-semibold flex items-center gap-1 text-primary">
-                        <User size={14}/> {load.profiles?.full_name || 'غير معروف'}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-lg font-black text-slate-800">
+                        <MapPin className="text-primary" size={20} />
+                        {load.origin}
+                        <span className="text-slate-300 mx-1">──</span>
+                        {load.destination}
+                      </div>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <User size={12} /> صاحب الشحنة: {load.profiles?.full_name}
                       </p>
                     </div>
+                    <div className="text-left">
+                       <p className="text-2xl font-black text-green-600">{load.price} <span className="text-xs">ر.س</span></p>
+                    </div>
                   </div>
-                  
-                  <Button className="w-full" onClick={() => toast.info("قريباً: تقديم عرض سعر")}>
-                    قبول الشحنة / تقديم عرض
+
+                  <div className="grid grid-cols-3 gap-4 py-4 border-y border-slate-50 my-4">
+                    <div className="text-center">
+                        <p className="text-[10px] text-muted-foreground mb-1">الوزن التقديري</p>
+                        <p className="font-bold text-sm">{load.weight} طن</p>
+                    </div>
+                    <div className="text-center border-x">
+                        <p className="text-[10px] text-muted-foreground mb-1">نوع البضاعة</p>
+                        <p className="font-bold text-sm">{load.package_type || 'عامة'}</p>
+                    </div>
+                    <div className="text-center">
+                        <p className="text-[10px] text-muted-foreground mb-1">تاريخ التحميل</p>
+                        <p className="font-bold text-sm">{load.pickup_date || 'عاجل'}</p>
+                    </div>
+                  </div>
+
+                  <Button 
+                    className="w-full h-12 rounded-xl text-md font-bold shadow-lg shadow-primary/20"
+                    onClick={() => handleAcceptLoad(load.id)}
+                    disabled={acceptingId === load.id}
+                  >
+                    {acceptingId === load.id ? (
+                      <Loader2 className="animate-spin mr-2" />
+                    ) : (
+                      <><CheckCircle2 className="ml-2" size={18} /> قبول الشحنة فوراً</>
+                    )}
                   </Button>
                 </CardContent>
               </Card>
