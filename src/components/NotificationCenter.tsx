@@ -1,143 +1,148 @@
+import { useState, useEffect } from 'react';
+import { Bell, Check, Zap, Info, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { UserProfile, Load, AdminStats, UserRole } from '@/types';
+import { useAuth } from '@/hooks/useAuth';
+import { api } from '@/services/api';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from 'framer-motion';
 
-export const api = {
-  // --- Auth & Profiles ---
-  async loginByEmail(email: string, password: string) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
-    const { data: roleData } = await supabase.from('user_roles').select('role').eq('user_id', data.user.id).maybeSingle();
-    return { session: data.session, user: data.user, profile: profile as UserProfile, role: roleData?.role as UserRole };
-  },
+export default function NotificationCenter() {
+  const { userProfile } = useAuth();
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  async updateProfile(userId: string, updates: any) {
-    const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
-    if (error) throw error;
-  },
+  const fetchNotifications = async () => {
+    if (!userProfile?.id) return;
+    try {
+      const data = await api.getNotifications(userProfile.id);
+      setNotifications(data || []);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // --- Storage (رفع الصور) ---
-  async uploadFile(path: string, file: File) {
-    const { data, error } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
-    if (error) throw error;
-    const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(data.path);
-    return publicUrl;
-  },
+  useEffect(() => {
+    fetchNotifications();
 
-  // --- Loads & Trips ---
-  async postLoad(loadData: any, userId: string) {
-    const { error } = await supabase.from('loads').insert([{
-      owner_id: userId, origin: loadData.origin, destination: loadData.destination,
-      weight: parseFloat(loadData.weight) || 0, price: parseFloat(loadData.price) || 0,
-      truck_size: loadData.truck_size, body_type: loadData.body_type,
-      description: loadData.description || '', type: loadData.type || 'general',
-      package_type: loadData.package_type, pickup_date: loadData.pickup_date,
-      status: 'available', distance: loadData.distance || 0
-    }]);
-    if (error) throw error;
-  },
+    // استماع للإشعارات الجديدة لحظة بلحظة (Real-time)
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', 
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userProfile?.id}` }, 
+        (payload) => {
+          setNotifications(prev => [payload.new, ...prev]);
+        }
+      )
+      .subscribe();
 
-  async getAvailableLoads() {
-    const { data, error } = await supabase
-      .from('loads')
-      .select('*, profiles:owner_id(full_name, phone)')
-      .eq('status', 'available')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
-  },
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile]);
 
-  async getOtherLoadsByOwner(ownerId: string, currentLoadId: string) {
-    const { data, error } = await supabase.from('loads').select('*').eq('owner_id', ownerId).neq('id', currentLoadId).eq('status', 'available').limit(5);
-    if (error) throw error;
-    return data;
-  },
+  const unreadCount = notifications.filter(n => !n.is_read).length;
 
-  async acceptLoad(loadId: string, driverId: string) {
-    const { error } = await supabase.from('loads').update({ status: 'in_progress', driver_id: driverId }).eq('id', loadId);
-    if (error) throw error;
-  },
+  const handleMarkAsRead = async () => {
+    if (!userProfile?.id) return;
+    await api.markNotificationsAsRead(userProfile.id);
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+  };
 
-  async completeLoad(loadId: string) {
-    const { error } = await supabase.from('loads').update({ status: 'completed' }).eq('id', loadId);
-    if (error) throw error;
-  },
+  return (
+    <Popover onOpenChange={(open) => open && unreadCount > 0 && handleMarkAsRead()}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative h-12 w-12 rounded-2xl bg-white shadow-sm border border-slate-100 hover:bg-slate-50 transition-all duration-300">
+          <Bell size={22} className={cn("text-slate-600", unreadCount > 0 && "animate-swing")} />
+          <AnimatePresence>
+            {unreadCount > 0 && (
+              <motion.span 
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0 }}
+                className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black text-white border-2 border-white shadow-lg"
+              >
+                {unreadCount}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </Button>
+      </PopoverTrigger>
+      
+      <PopoverContent className="w-[380px] p-0 rounded-[2.5rem] overflow-hidden border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl" align="end">
+        {/* Header */}
+        <div className="bg-slate-900 p-6 text-white">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/10 rounded-xl">
+                <Zap size={18} className="text-blue-400" />
+              </div>
+              <h3 className="font-black text-lg tracking-tight">مركز التنبيهات</h3>
+            </div>
+            {unreadCount > 0 && (
+              <Badge variant="outline" className="border-white/20 text-white/80 text-[10px] font-bold px-2 py-0">
+                {unreadCount} جديد
+              </Badge>
+            )}
+          </div>
+        </div>
 
-  async cancelLoadAssignment(loadId: string) {
-    const { error } = await supabase.from('loads').update({ status: 'available', driver_id: null }).eq('id', loadId);
-    if (error) throw error;
-  },
+        {/* Notifications List */}
+        <div className="max-h-[450px] overflow-y-auto custom-scrollbar">
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-8 w-8 animate-spin text-slate-300" />
+            </div>
+          ) : notifications.length > 0 ? (
+            <div className="divide-y divide-slate-50">
+              {notifications.map((n, idx) => (
+                <motion.div 
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  key={n.id} 
+                  className={cn(
+                    "p-5 hover:bg-slate-50 transition-colors flex gap-4",
+                    !n.is_read && "bg-blue-50/30"
+                  )}
+                >
+                  <div className={cn(
+                    "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm",
+                    n.title.includes("نجاح") ? "bg-emerald-50 text-emerald-600" : "bg-blue-50 text-blue-600"
+                  )}>
+                    {n.title.includes("نجاح") ? <Check size={20} /> : <Info size={20} />}
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <p className="font-black text-sm text-slate-800 leading-none">{n.title}</p>
+                    <p className="text-xs text-slate-500 font-medium leading-relaxed">{n.message}</p>
+                    <p className="text-[10px] text-slate-400 font-bold pt-1">{new Date(n.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-20 text-center space-y-4">
+              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-200">
+                <Bell size={32} />
+              </div>
+              <p className="text-slate-400 font-bold text-sm">لا توجد تنبيهات جديدة حالياً</p>
+            </div>
+          )}
+        </div>
 
-  async deleteLoad(loadId: string) {
-    const { error } = await supabase.from('loads').delete().eq('id', loadId);
-    if (error) throw error;
-  },
-
-  async getUserLoads(userId: string) {
-    const { data, error } = await supabase.from('loads').select('*').or(`owner_id.eq.${userId},driver_id.eq.${userId}`).order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Notifications ---
-  async sendNotification(userId: string, title: string, message: string) {
-    await supabase.from('notifications').insert([{ user_id: userId, title, message }]);
-  },
-
-  async getNotifications(userId: string) {
-    const { data, error } = await supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(20);
-    if (error) throw error;
-    return data;
-  },
-
-  async markNotificationsAsRead(userId: string) {
-    await supabase.from('notifications').update({ is_read: true }).eq('user_id', userId);
-  },
-
-  // --- Drivers ---
-  async getAllDrivers() {
-    const { data, error } = await supabase.from('driver_details').select('*, profiles(full_name, phone, email, avatar_url)');
-    if (error) throw error;
-    return data;
-  },
-
-  async getAllSubDrivers() {
-    const { data, error } = await supabase.from('sub_drivers').select('*');
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Stats ---
-  async getShipperStats(userId: string) {
-    const { count: active } = await supabase.from('loads').select('*', { count: 'exact', head: true }).eq('owner_id', userId).in('status', ['available', 'in_progress']);
-    const { count: completed } = await supabase.from('loads').select('*', { count: 'exact', head: true }).eq('owner_id', userId).eq('status', 'completed');
-    return { activeLoads: active || 0, completedTrips: completed || 0 };
-  },
-
-  async getDriverStats(userId: string) {
-    const { count: active } = await supabase.from('loads').select('*', { count: 'exact', head: true }).eq('driver_id', userId).eq('status', 'in_progress');
-    const { count: completed } = await supabase.from('loads').select('*', { count: 'exact', head: true }).eq('driver_id', userId).eq('status', 'completed');
-    return { activeLoads: active || 0, completedTrips: completed || 0, rating: 4.8 };
-  },
-
-  async getAdminStats(): Promise<AdminStats> {
-    const { count: users } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
-    const { count: drivers } = await supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role', 'driver');
-    const { count: shippers } = await supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role', 'shipper');
-    const { count: activeLoads } = await supabase.from('loads').select('*', { count: 'exact', head: true }).in('status', ['available', 'in_progress']);
-    const { count: completed } = await supabase.from('loads').select('*', { count: 'exact', head: true }).eq('status', 'completed');
-    return { totalUsers: users || 0, totalDrivers: drivers || 0, totalShippers: shippers || 0, activeLoads: activeLoads || 0, completedTrips: completed || 0 };
-  },
-
-  async getAllUsers() {
-    const { data, error } = await supabase.from('profiles').select('*, user_roles(role)').order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
-  },
-
-  async getAllLoads() {
-    const { data, error } = await supabase.from('loads').select('*, profiles:owner_id(full_name)').order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
-  }
-};
+        {/* Footer */}
+        <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-center">
+          <Button variant="ghost" className="text-[11px] font-black text-slate-400 uppercase tracking-widest hover:text-primary transition-colors">
+            عرض كافة السجلات
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
