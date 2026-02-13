@@ -6,7 +6,7 @@ export const api = {
   async sendNotification(userId: string, title: string, message: string) {
     await supabase.from('notifications').insert([{
       user_id: userId,
-      title,
+      title,   
       message,
       is_read: false
     }]);
