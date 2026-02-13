@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Star, CheckCircle, Navigation, ShieldCheck, ArrowUpRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { cn } from '@/lib/utils'; // السطر المصلح
+import { cn } from '@/lib/utils'; // حل مشكلة ReferenceError
 
 export default function ShipperDashboard() {
   const { userProfile } = useAuth();
@@ -23,7 +23,7 @@ export default function ShipperDashboard() {
         api.getUserLoads(userProfile.id)
       ]);
       setStats(s);
-      // عرض الشحنات المكتملة التي لم يتم تقييمها بعد
+      // الشحنات التي اكتملت وتحتاج تقييم
       setPendingRating(loads.filter((l: any) => l.status === 'completed'));
     } catch (e) {
       console.error(e);
@@ -52,7 +52,7 @@ export default function ShipperDashboard() {
             <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic uppercase">Mission Control</h1>
             <p className="text-slate-500 font-medium mt-1">أهلاً بك {userProfile?.full_name}، شحناتك تحت السيطرة.</p>
           </div>
-          <Button onClick={() => window.location.href='/shipper/post'} className="bg-blue-600 hover:bg-blue-700 text-white rounded-2xl h-16 px-8 font-black text-lg shadow-xl shadow-blue-500/20 gap-3">
+          <Button onClick={() => window.location.href='/shipper/post'} className="bg-blue-600 hover:bg-blue-700 text-white rounded-2xl h-16 px-8 font-black text-lg shadow-xl shadow-blue-500/20 gap-3 transition-all active:scale-95">
             نشر شحنة جديدة
           </Button>
         </div>
@@ -68,7 +68,7 @@ export default function ShipperDashboard() {
                   <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                     <div className="text-right">
                       <p className="text-lg font-black text-slate-800">وصلت شحنتك من {load.origin}</p>
-                      <p className="text-sm text-slate-400 font-bold">يرجى تقييم السائق: {load.profiles?.full_name || 'ناقل معتمد'}</p>
+                      <p className="text-sm text-slate-400 font-bold">يرجى تقييم السائق: {load.profiles?.full_name || 'سائق معتمد'}</p>
                     </div>
                     <div className="flex gap-2">
                        {[1, 2, 3, 4, 5].map(num => (
